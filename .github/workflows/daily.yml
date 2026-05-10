@@ -28,3 +28,9 @@ jobs:
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           MAX_ARTICLES_PER_RUN: 10
         run: python -m nephro_digest.main
+      - name: Upload digest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nephrology-digest
+          path: summaries/
