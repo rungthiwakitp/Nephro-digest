@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import argparse
-import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 
 from nephro_digest.config import load_settings
 from nephro_digest.feeds import Paper, fetch_papers
-from nephro_digest.markdown import filename_for_paper, render_markdown, write_summary
+from nephro_digest.markdown import DigestArticle, filename_for_digest, write_daily_digest
 from nephro_digest.state import ProcessingState
-from nephro_digest.summarizer import summarize_paper
 
 
 NON_ARTICLE_TITLES = {
@@ -20,13 +19,52 @@ NON_ARTICLE_TITLES = {
     "inside front cover",
 }
 
+NEPHROLOGY_KEYWORDS = (
+    "kidney",
+    "renal",
+    "nephrology",
+    "CKD",
+    "AKI",
+    "dialysis",
+    "transplant",
+    "glomerular",
+    "proteinuria",
+    "ESRD",
+    "IgA nephropathy",
+    "hemodialysis",
+    "peritoneal dialysis",
+    "nephrotic syndrome",
+)
+
+KEYWORD_NOTE_TOPICS = {
+    "kidney": "kidney disease or kidney function",
+    "renal": "kidney disease or kidney function",
+    "nephrology": "nephrology practice or research",
+    "CKD": "chronic kidney disease",
+    "AKI": "acute kidney injury",
+    "dialysis": "dialysis care",
+    "transplant": "kidney or solid-organ transplantation",
+    "glomerular": "glomerular disease",
+    "proteinuria": "proteinuric kidney disease",
+    "ESRD": "end-stage kidney disease",
+    "IgA nephropathy": "IgA nephropathy",
+    "hemodialysis": "hemodialysis",
+    "peritoneal dialysis": "peritoneal dialysis",
+    "nephrotic syndrome": "nephrotic syndrome",
+}
+
+NEPHROLOGY_KEYWORD_RE = re.compile(
+    "|".join(rf"\b{re.escape(keyword)}\b" for keyword in NEPHROLOGY_KEYWORDS),
+    re.IGNORECASE,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a daily nephrology paper digest.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch feeds and show what would be processed without calling OpenAI or Google Drive.",
+        help="Fetch feeds and show what would be included without writing or uploading the digest.",
     )
     return parser.parse_args()
 
@@ -39,8 +77,6 @@ def main() -> int:
 
     drive_service = None
     if not dry_run:
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError("Set OPENAI_API_KEY before running the full digest.")
         if settings.skip_google_drive:
             print("Google Drive upload disabled because SKIP_GOOGLE_DRIVE=true.")
         elif not settings.google_drive_folder_id:
@@ -53,65 +89,62 @@ def main() -> int:
             drive_service = build_drive_service()
 
     all_papers = fetch_papers(settings.feeds)
-    papers = [paper for paper in all_papers if should_consider_paper(paper, settings.lookback_days)]
+    recent_articles = [
+        paper for paper in all_papers if should_consider_paper(paper, settings.lookback_days)
+    ]
+    matching_articles = [
+        DigestArticle(
+            paper=paper,
+            matched_keywords=matches,
+            why_this_may_matter=why_this_may_matter(matches),
+        )
+        for paper in recent_articles
+        if (matches := matched_nephrology_keywords(paper))
+    ]
+    new_articles = [
+        article
+        for article in matching_articles
+        if not state.seen(article.paper.stable_id)
+    ][: settings.max_articles_per_run]
     print(
         f"Found {len(all_papers)} feed entries across {len(settings.feeds)} journal feeds; "
-        f"{len(papers)} are eligible for this run."
+        f"{len(recent_articles)} are recent articles; "
+        f"{len(matching_articles)} match nephrology keywords; "
+        f"{len(new_articles)} are new and selected for this digest."
     )
 
-    processed_this_run = 0
-    for paper in papers:
-        if processed_this_run >= settings.max_papers_per_run:
-            print(f"Reached MAX_PAPERS_PER_RUN={settings.max_papers_per_run}; stopping.")
-            break
+    if not new_articles:
+        print("No new nephrology-related articles to include.")
+        return 0
 
-        filename = filename_for_paper(paper)
-        if state.seen(paper.stable_id):
-            continue
-
-        if drive_service and settings.google_drive_folder_id:
-            from nephro_digest.drive import file_exists
-
-        if drive_service and settings.google_drive_folder_id and file_exists(
-            drive_service, settings.google_drive_folder_id, filename
-        ):
-            print(f"Skipping already-uploaded file: {filename}")
-            state.mark(paper.stable_id)
-            continue
-
-        action = "Would process" if dry_run else "Processing"
-        print(f"{action}: {paper.journal} | {paper.title}")
-        if dry_run:
-            processed_this_run += 1
-            continue
-
-        summary = summarize_paper(
-            paper,
-            model=settings.openai_model,
-            max_output_tokens=settings.max_output_tokens,
-        )
-        markdown = render_markdown(paper, summary)
-        path = write_summary(settings.output_dir, paper, markdown)
-        print(f"Wrote {path}")
-
-        if drive_service and settings.google_drive_folder_id:
-            from nephro_digest.drive import upload_markdown
-
-            uploaded_url = upload_markdown(drive_service, settings.google_drive_folder_id, path)
-            print(f"Uploaded to Google Drive: {uploaded_url}")
-        elif settings.skip_google_drive:
-            print("Google Drive upload skipped for local-only run.")
-
-        state.mark(paper.stable_id)
-        processed_this_run += 1
+    for article in new_articles:
+        action = "Would include" if dry_run else "Including"
+        print(f"{action}: {article.paper.journal} | {article.paper.title}")
 
     if dry_run:
-        print(f"Dry run complete. Would process {processed_this_run} new papers.")
-    elif processed_this_run == 0:
-        print("No new papers to summarize.")
-    else:
-        print(f"Processed {processed_this_run} new papers.")
+        print(f"Dry run complete. Would include {len(new_articles)} articles.")
+        return 0
 
+    run_date = datetime.now(timezone.utc)
+    path = write_daily_digest(settings.output_dir, new_articles, run_date)
+    print(f"Wrote daily digest: {path}")
+
+    digest_filename = filename_for_digest(run_date)
+    if drive_service and settings.google_drive_folder_id:
+        from nephro_digest.drive import file_exists, upload_markdown
+
+        if file_exists(drive_service, settings.google_drive_folder_id, digest_filename):
+            print(f"Skipping upload because {digest_filename} already exists in Google Drive.")
+        else:
+            uploaded_url = upload_markdown(drive_service, settings.google_drive_folder_id, path)
+            print(f"Uploaded daily digest to Google Drive: {uploaded_url}")
+    elif settings.skip_google_drive:
+        print("Google Drive upload skipped for local-only run.")
+
+    for article in new_articles:
+        state.mark(article.paper.stable_id)
+
+    print(f"Processed {len(new_articles)} articles.")
     return 0
 
 
@@ -122,6 +155,51 @@ def should_consider_paper(paper: Paper, lookback_days: int | None) -> bool:
         return True
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     return paper.published >= cutoff
+
+
+def matched_nephrology_keywords(paper: Paper) -> tuple[str, ...]:
+    searchable_text = f"{paper.title}\n{paper.abstract}"
+    matches = {
+        match.group(0).lower(): canonical_keyword(match.group(0))
+        for match in NEPHROLOGY_KEYWORD_RE.finditer(searchable_text)
+    }
+    return tuple(sorted(matches.values(), key=lambda keyword: NEPHROLOGY_KEYWORDS.index(keyword)))
+
+
+def is_nephrology_related(paper: Paper) -> bool:
+    return bool(matched_nephrology_keywords(paper))
+
+
+def canonical_keyword(value: str) -> str:
+    normalized = value.lower()
+    for keyword in NEPHROLOGY_KEYWORDS:
+        if keyword.lower() == normalized:
+            return keyword
+    return value
+
+
+def why_this_may_matter(matched_keywords: tuple[str, ...]) -> str:
+    topics = []
+    for keyword in matched_keywords:
+        topic = KEYWORD_NOTE_TOPICS[keyword]
+        if topic not in topics:
+            topics.append(topic)
+
+    if not topics:
+        return "No nephrology keyword match was found."
+
+    return (
+        "The title or abstract matches nephrology keywords "
+        f"({', '.join(matched_keywords)}), pointing to {format_topic_list(topics)}."
+    )
+
+
+def format_topic_list(topics: list[str]) -> str:
+    if len(topics) == 1:
+        return topics[0]
+    if len(topics) == 2:
+        return f"{topics[0]} and {topics[1]}"
+    return f"{', '.join(topics[:-1])}, and {topics[-1]}"
 
 
 if __name__ == "__main__":

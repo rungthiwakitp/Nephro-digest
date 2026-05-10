@@ -14,7 +14,9 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 
 def build_drive_service() -> Any:
-    credentials_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_INFO")
+    credentials_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv(
+        "GOOGLE_SERVICE_ACCOUNT_INFO"
+    )
     credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
     if credentials_json:
@@ -29,7 +31,8 @@ def build_drive_service() -> Any:
         )
     else:
         raise RuntimeError(
-            "Set GOOGLE_SERVICE_ACCOUNT_INFO or GOOGLE_APPLICATION_CREDENTIALS for Google Drive upload."
+            "Set GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_INFO, or "
+            "GOOGLE_APPLICATION_CREDENTIALS for Google Drive upload."
         )
 
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
@@ -77,4 +80,3 @@ def upload_markdown(service: Any, folder_id: str, path: Path) -> str:
         .execute()
     )
     return str(uploaded.get("webViewLink") or uploaded.get("id"))
-

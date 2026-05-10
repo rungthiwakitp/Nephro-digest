@@ -28,9 +28,7 @@ class Settings:
     feeds: dict[str, list[str]]
     output_dir: Path
     state_file: Path
-    openai_model: str
-    max_output_tokens: int
-    max_papers_per_run: int
+    max_articles_per_run: int
     lookback_days: int | None
     google_drive_folder_id: str | None
     skip_google_drive: bool
@@ -91,9 +89,7 @@ def load_settings() -> Settings:
         feeds=feeds,
         output_dir=Path(os.getenv("OUTPUT_DIR", "summaries")),
         state_file=Path(os.getenv("STATE_FILE", ".state/processed.json")),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
-        max_output_tokens=_int_from_env("OPENAI_MAX_OUTPUT_TOKENS", 450),
-        max_papers_per_run=_int_from_env("MAX_PAPERS_PER_RUN", 50),
+        max_articles_per_run=_int_from_env("MAX_ARTICLES_PER_RUN", 10),
         lookback_days=_optional_positive_int_from_env("LOOKBACK_DAYS", 14),
         google_drive_folder_id=os.getenv("GOOGLE_DRIVE_FOLDER_ID"),
         skip_google_drive=_bool_from_env("SKIP_GOOGLE_DRIVE", False),
