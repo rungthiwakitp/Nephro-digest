@@ -4,7 +4,8 @@ name: Daily Nephrology Digest
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
-
+permissions:
+  contents: write
 jobs:
   run-digest:
     runs-on: ubuntu-latest
@@ -34,3 +35,11 @@ jobs:
         with:
           name: nephrology-digest
           path: summaries/
+      - name: Commit updated summaries and state
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add summaries/ state/
+          git commit -m "Update nephrology digest and seen articles" || echo "No changes to commit"
+          git push
