@@ -10,6 +10,7 @@ from nephro_digest.feeds import Paper
 @dataclass(frozen=True)
 class DigestArticle:
     paper: Paper
+    article_id: str
     matched_keywords: tuple[str, ...]
     why_this_may_matter: str
 
@@ -32,6 +33,10 @@ def render_daily_digest(
         f"Articles included: {len(articles)}",
         "",
     ]
+
+    if not articles:
+        lines.extend(["No new nephrology-related articles found today.", ""])
+        return "\n".join(lines).rstrip() + "\n"
 
     for index, article in enumerate(articles, start=1):
         paper = article.paper

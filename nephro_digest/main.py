@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from nephro_digest.config import load_settings
 from nephro_digest.feeds import Paper, fetch_papers
 from nephro_digest.markdown import DigestArticle, filename_for_digest, write_daily_digest
-from nephro_digest.state import ProcessingState
+from nephro_digest.state import ProcessingState, article_id_for_paper
 
 
 NON_ARTICLE_TITLES = {
@@ -95,39 +95,47 @@ def main() -> int:
     matching_articles = [
         DigestArticle(
             paper=paper,
+            article_id=article_id_for_paper(paper),
             matched_keywords=matches,
             why_this_may_matter=why_this_may_matter(matches),
         )
         for paper in recent_articles
         if (matches := matched_nephrology_keywords(paper))
     ]
+    unseen_articles = []
+    already_seen_skipped = 0
+    for article in matching_articles:
+        if state.seen(article.article_id):
+            already_seen_skipped += 1
+        else:
+            unseen_articles.append(article)
+
     new_articles = [
         article
-        for article in matching_articles
-        if not state.seen(article.paper.stable_id)
+        for article in unseen_articles
     ][: settings.max_articles_per_run]
-    print(
-        f"Found {len(all_papers)} feed entries across {len(settings.feeds)} journal feeds; "
-        f"{len(recent_articles)} are recent articles; "
-        f"{len(matching_articles)} match nephrology keywords; "
-        f"{len(new_articles)} are new and selected for this digest."
-    )
 
-    if not new_articles:
-        print("No new nephrology-related articles to include.")
-        return 0
+    print(f"Total feed entries: {len(all_papers)}")
+    print(f"Recent articles: {len(recent_articles)}")
+    print(f"Nephrology matches: {len(matching_articles)}")
+    print(f"Already seen skipped: {already_seen_skipped}")
+    print(f"New selected: {len(new_articles)}")
 
     for article in new_articles:
         action = "Would include" if dry_run else "Including"
         print(f"{action}: {article.paper.journal} | {article.paper.title}")
 
     if dry_run:
-        print(f"Dry run complete. Would include {len(new_articles)} articles.")
+        if not new_articles:
+            print("Dry run complete. Would create a no-new-articles digest.")
+        else:
+            print(f"Dry run complete. Would include {len(new_articles)} articles.")
         return 0
 
     run_date = datetime.now(timezone.utc)
     path = write_daily_digest(settings.output_dir, new_articles, run_date)
     print(f"Wrote daily digest: {path}")
+    state.mark_many([article.article_id for article in new_articles], run_date)
 
     digest_filename = filename_for_digest(run_date)
     if drive_service and settings.google_drive_folder_id:
@@ -141,10 +149,7 @@ def main() -> int:
     elif settings.skip_google_drive:
         print("Google Drive upload skipped for local-only run.")
 
-    for article in new_articles:
-        state.mark(article.paper.stable_id)
-
-    print(f"Processed {len(new_articles)} articles.")
+    print(f"Processed {len(new_articles)} new articles.")
     return 0
 
 

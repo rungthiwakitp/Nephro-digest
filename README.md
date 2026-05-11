@@ -60,6 +60,8 @@ Optional repository variables:
 
 The workflow runs every day at `12:00 UTC`. Edit the cron entry in `.github/workflows/daily.yml` if you want a different morning time.
 
+After each scheduled run, GitHub Actions commits the updated `state/seen_articles.json` file back to the repository so future runs can skip articles that have already appeared.
+
 ## Google Drive Setup
 
 1. Create a Google Cloud project.
@@ -95,7 +97,9 @@ By default, the script only considers feed entries published in the last 14 days
 
 ## Duplicate Avoidance
 
-The digest stores stable article IDs in `.state/processed.json` after a digest is written and uploaded or intentionally run in local-only mode. GitHub Actions restores and saves `.state` with the Actions cache.
+The digest stores article IDs in `state/seen_articles.json`. Each article is tracked by DOI when available, otherwise by URL, otherwise by normalized title.
+
+Before the digest selects articles, it skips anything already present in `state/seen_articles.json`. After a digest is successfully written, selected article IDs are added to that state file.
 
 The upload step also checks Google Drive for an existing daily digest filename before uploading another file with the same name.
 
@@ -124,3 +128,5 @@ One Markdown digest is written under `summaries/YYYY-MM-DD/` and uploaded to Goo
 - Abstract
 - Matched keywords
 - "Why this may matter" note based only on keyword matches
+
+If no new nephrology-related articles are found, the digest still gets created and says: `No new nephrology-related articles found today.`
