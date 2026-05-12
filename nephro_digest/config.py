@@ -90,7 +90,7 @@ def load_settings() -> Settings:
         output_dir=Path(os.getenv("OUTPUT_DIR", "summaries")),
         state_file=Path(os.getenv("STATE_FILE", "state/seen_articles.json")),
         max_articles_per_run=_int_from_env("MAX_ARTICLES_PER_RUN", 10),
-        lookback_days=_optional_positive_int_from_env("LOOKBACK_DAYS", 14),
+        lookback_days=_optional_positive_int_from_env("LOOKBACK_DAYS", 2),
         google_drive_folder_id=os.getenv("GOOGLE_DRIVE_FOLDER_ID"),
         skip_google_drive=_bool_from_env("SKIP_GOOGLE_DRIVE", False),
         dry_run=_bool_from_env("DRY_RUN", False),
